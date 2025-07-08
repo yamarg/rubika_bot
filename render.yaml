@@ -1,0 +1,7 @@
+services:
+  - type: worker
+    name: rubika-bot
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: "python rubika_channel_copier.py"
