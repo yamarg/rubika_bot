@@ -1,0 +1,23 @@
+{
+    "auth": "pfzdhlyppiydkssvqmiyndsavgypcfvz",
+    "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIICXAIBAAKBgQCN6a5TXI3SQixtkCZOXlyYPHB+HlNtAOkeG5Ha1zpXJ7zpBjhu\nJmOzAPH4Q0nFB2TPz64NYA1AbsgxphJLJ7AVYOis1easCrvxYkcdjYQNJuqK0O8g\nVXrPITdnmVxgMLfUH4yQzahioDoqPhpYJ7QzVJ1+OBekD+DuRJJYAJctqQIDAQAB\nAoGABMz36bgC0C8O47HxqcsFZNz+jTWnatOSD0OtfnKzdYlRmaxtMkS4MLECfnyA\nPVsPrPwAjlFGgXx95zgP/FzeVv3nFwTINaxhcJHk2PYcSy3hY1dxZctb89A8ZQVH\nIAeEixhriDb71DSYPN8JSW+ynBi8W6obWoa7QgPSr2N8GdECQQC6Ue6NT9Q45fMl\nnx70LEyIHjh7EJB8lELCbrvKEdVp1Ti30kiTEjFSUz3GtpqtaFja+JojT07AUoId\n3xu48TPFAkEAwvxAbz7qsFYOetjbCeXdPLKLvoQ8Y7n02Z8SYtjEcDctP+7dIJnA\nF+z9aLTcqCITl/Xn1oqZMraiwoFxYIiclQJAT0PV8eZZSc+CDqpQN960vF/m9WwJ\nnAZTFHaZi5Dksv6T/5gFahQeSYDCUkyTJ1yyGI4UvRrbTPSNCHpHR/nNZQJAQ67G\nOxdu5cjpe9Ecr2HgGvqrMXW7dK6PBJ+IBVHTVlSA24lxrqhQGr4D9L2bPq2deYk9\ncaZoqUbmVngSP/0LxQJBALLBqIU4eDFA85rKp96/gMnE8HF/G3NQErYPzuS/wQos\ny+BQOLtd3uFLqKjM74vo2LQaTREPztw50d8s+0bxv5w=\n-----END RSA PRIVATE KEY-----",
+    "user": {
+        "user_guid": "u0IUNYg01533c1a7004bbd05aa385225",
+        "first_name": "\u062d\u0636\u0631\u062a\u200c\u0650\u0622\u0642\u0627",
+        "phone": "989999328485",
+        "avatar_thumbnail": {
+            "file_id": "70302334705201",
+            "mime": "jpg",
+            "dc_id": "922",
+            "access_hash_rec": "3349690457317134483558495632482025070117"
+        },
+        "last_online": 1752392626,
+        "bio": "\u200c\n\u200c\n\u062c\u0627\u062a \u0647\u0645\u06cc\u0634\u0647             \u0645\u06cc\u0645\u0648\u0646\u0647\n\u200c\n\u200c\n@textaza",
+        "is_deleted": false,
+        "is_verified": false,
+        "online_time": {
+            "type": "Exact",
+            "exact_time": 1752392626
+        }
+    }
+}
