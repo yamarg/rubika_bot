@@ -120,6 +120,13 @@ class UserAuthentication(Base):
     expected_result = Column(Integer, nullable=False)
     auth = Column(Boolean, default=False)
 
+class LearnedResponse(Base):
+    __tablename__ = "learned_responses"
+    id = Column(Integer, primary_key=True)
+    group_guid = Column(String)
+    trigger = Column(String)
+    response = Column(String)
+
 # ایجاد یک موتور و جلسه برای ارتباط با دیتابیس
 engine = create_engine('sqlite:///robot.db', echo=False, pool_size=10, max_overflow=20)
 Base.metadata.create_all(engine)

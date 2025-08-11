@@ -33,7 +33,10 @@ PERSIAN_RE = re.compile(r'[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]+')
 symbols = {2: 'X', 1: 'O'}
 game_data = {}
 
-BADWORDS = ["کونی"]
+BADWORDS = [""]
+
+
+
 @bot.on_message_updates(filters.text)
 def get_my_guid(update: Update):
     print(update.author_guid)
@@ -102,6 +105,208 @@ def is_bug(update: Update, result):
 
     return update.is_group and update.text and r'‌‌‌‌‌‍‍          ‍‍' in update.text
 
+
+@bot.on_message_updates(filters.is_group)
+def filter_add_command(update: Update):
+    if not update.text:
+        return
+
+    # فقط اگر با "!" شروع شود
+    if not update.text.startswith('!'):
+        return
+
+    parts = update.text.split(maxsplit=1)
+
+    if not update.is_admin(user_guid=update.author_guid):
+        return
+    
+    if len(parts) < 2 or not parts[1].strip():
+        return update.reply("لطفاً بعد از ! کلمه‌ای را برای فیلتر وارد کنید. مثلا:\n`!کلمه‌بد`", parse_mode=ParseMode.MARKDOWN)
+
+    word = parts[1].strip()
+
+    group_guid = update.object_guid
+
+    existing = session.query(database.FilterWord).filter_by(group_guid=group_guid, word=word).first()
+    if existing:
+        return update.reply("این کلمه قبلاً فیلتر شده است.")
+
+    new_word = database.FilterWord(group_guid=group_guid, word=word)
+    session.add(new_word)
+    session.commit()
+
+    update.reply(f"✅ کلمه «{word}» به لیست فیلتر افزوده شد.")
+
+
+@bot.on_message_updates(filters.is_group, filters.commands(['انفیلتر'], prefixes=''))
+def delete_filter_word(update: Update):
+    if not update.text:
+        return
+
+    if not update.text.startswith('انفیلتر'):
+        return
+
+    parts = update.text.split(maxsplit=1)
+    if not update.is_admin(user_guid=update.author_guid):
+        return update.reply("فقط مدیران می‌توانند از این دستور استفاده کنند.")
+    
+    if len(parts) < 2 or not parts[1].strip():
+        return update.reply("لطفاً بعد از دستور کلمه‌ای را برای حذف وارد کنید. مثال:\n/حذف_فیلتر کلمه", parse_mode=ParseMode.MARKDOWN)
+
+    word = parts[1].strip()
+    group_guid = update.object_guid
+
+    existing = session.query(database.FilterWord).filter_by(group_guid=group_guid, word=word).first()
+    if not existing:
+        return update.reply("❌ این کلمه در لیست فیلتر وجود ندارد.")
+
+    session.delete(existing)
+    session.commit()
+
+    update.reply(f"✅ کلمه «{word}» از لیست فیلتر حذف شد.")
+
+
+@bot.on_message_updates(filters.is_group)
+def check_filter_words(update: Update):
+    
+    user_guid = update.author_guid
+    info = update.client.get_info(object_guid=user_guid)
+    first_name = info["user"].get("first_name", "")
+    last_name = info["user"].get("last_name", "")
+    full_name = f"{first_name} {last_name}".strip() or "کاربر"
+    mention = f"[{full_name}]({update.author_guid})"
+    words = session.query(database.FilterWord).filter_by(group_guid=update.object_guid).all()
+    if not words or not update.text:
+        return
+
+    msg_text = update.text.strip().lower()
+    for word_obj in words:
+        if word_obj.word.lower() in msg_text:
+                       
+            try:
+                if update.is_admin(user_guid= update.author_guid):
+                    return
+                # حذف پیام
+                update.delete()
+
+                # ثبت اخطار
+                warning = database.Warning(
+                    group_guid=update.object_guid,
+                    user_guid=update.author_guid,
+                    reason=f"کلمه ممنوعه: {word_obj.word}"
+                )
+                session.add(warning)
+                session.commit()
+
+                # شمارش اخطار
+                count = session.query(database.Warning).filter_by(
+                    group_guid=update.object_guid,
+                    user_guid=update.author_guid
+                ).count()
+
+                # پاسخ
+                update.reply(
+                    f"⚠️ {mention}\n"
+                    f"شما از کلمه فیلتر شده استفاده کردید: «{word_obj.word}»\n"
+                    f"تعداد اخطارهای شما: {count}/3",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
+                # بن اگر ۳ بار تکرار شد
+                if count >= 3:
+                    existing_ban = session.query(database.BannedUser).filter_by(
+                        group_guid=update.object_guid,
+                        user_guid=update.author_guid
+                    ).first()
+                    if not existing_ban:
+                        session.add(database.BannedUser(
+                            group_guid=update.object_guid,
+                            user_guid=update.author_guid
+                        ))
+                        session.commit()
+                        update.ban_member(user_guid=update.author_guid)
+                        return update.reply_user(f"⛔️ {mention} به دلیل دریافت ۳ اخطار از گروه بن شد.")
+
+            except Exception as e:
+                print("خطا در فیلتر:", e)
+            break
+
+@bot.on_message_updates(filters.is_group, filters.commands(['لیست فیلترها'], prefixes=''))
+def show_filter_list(update: Update):
+
+    if not update.is_admin(user_guid=update.author_guid):
+        return 
+    
+    words = session.query(database.FilterWord).filter_by(group_guid=update.object_guid).all()
+    if not words:
+        return update.reply("🚫 هیچ کلمه‌ای فیلتر نشده است.")
+    
+    text = "📋 لیست کلمات فیلتر شده:\n\n"
+    for i, w in enumerate(words, 1):
+        text += f"{i}. {w.word}\n"
+
+    update.reply(text)
+
+@bot.on_message_updates(filters.is_group, filters.commands(['حذف اخطار'], prefixes=''))
+def remove_user_warnings(update: Update):
+    if not update.is_admin(user_guid=update.author_guid):
+        return 
+
+    if not update.reply_message_id:
+        return update.reply("⛔ لطفاً روی پیام کاربر مورد نظر ریپلای کنید.")
+
+    try:
+        # گرفتن user_guid از پیام ریپلای شده
+        replied_msg = update.get_messages(message_ids=update.reply_message_id).messages[0]
+        target_guid = replied_msg.author_object_guid
+
+        # حذف اخطارها
+        session.query(database.Warning).filter_by(
+            group_guid=update.object_guid,
+            user_guid=target_guid
+        ).delete()
+        session.commit()
+
+        update.reply("✅ همه اخطارهای این کاربر پاک شدند.")
+
+    except Exception as e:
+        print("خطا در حذف اخطار:", e)
+        update.reply("⚠️ خطایی رخ داد هنگام حذف اخطارها.")
+
+
+@bot.on_message_updates(filters.is_group, filters.commands(['لیست ادمین ها'], prefixes=''))
+def list_admins(update: Update):
+    group_guid = update.object_guid
+
+    # فقط اگر پیام‌دهنده خودش ادمین باشد
+    if not update.is_admin(user_guid=update.author_guid):
+        return
+
+    # واکشی لیست ادمین‌ها از دیتابیس
+    admins = session.query(database.GroupAdmin).filter_by(group_guid=group_guid).all()
+
+    if not admins:
+        return update.reply("🚫 لیستی از ادمین‌ها یافت نشد.")
+
+    text = "👮‍♂️ لیست ادمین‌های این گروه:\n\n"
+    for index, admin in enumerate(admins, start=1):
+        user = session.query(database.User).filter_by(user_guid=admin.user_guid).first()
+        info = update.client.get_info(object_guid= admin.user_guid)
+        first_name = info["user"].get("first_name", "")
+        last_name = info["user"].get("last_name", "")
+        full_name = f"{first_name} {last_name}".strip()
+        mention = f"[{full_name}]({user.user_guid})"
+        text += f"{index}- {mention}\n"
+
+            # اگر اطلاعات ثبت شده باشد، منشن با نام کامل بساز
+            # name = f"{user.username}" if user.username else f"{user.user_guid}"
+
+
+
+
+    update.reply(text, parse_mode=ParseMode.MARKDOWN)
+
+
 @bot.on_message_updates(is_bug)
 async def delete_bug(update: Update):
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
@@ -110,7 +315,7 @@ async def delete_bug(update: Update):
         await update.delete()
         await update.ban_member()
 
-@bot.on_message_updates(filters.is_group, filters.Commands(['بیو', 'bio'], ''))
+@bot.on_message_updates(filters.is_group, filters.commands(['بیو', 'bio'], ''))
 def send_bio(update: Update):
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
     if group:
@@ -119,19 +324,87 @@ def send_bio(update: Update):
         keyword = bio.keyword.replace(' ', '_')
         return update.reply(f'{text}\n\n#{keyword}')
 
-@bot.on_message_updates(filters.is_group, filters.Commands('ویسکال', prefixes=['', '!']))
+@bot.on_message_updates(filters.is_group, filters.commands(['ویسکال', 'کال'], prefixes=['', '!']))
 def make_voicecall(update: Update):
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
     url = update.text.split()[-1]
     
     if group and update.is_admin():
         bot.create_group_voice_chat(group_guid=update.object_guid)
+        update.reply(f"کال ایجاد شد!")
 
+
+
+@bot.on_message_updates(filters.is_group)
+def learn_response(update: Update):
+    if not update.text or " !! " not in update.text:
+        return
+
+    if not update.is_admin(user_guid=update.author_guid):
+        return
+
+    parts = update.text.split(" !! ")
+    if len(parts) != 2:
+        return
+
+    trigger, response = parts
+    trigger = trigger.strip()
+    response = response.strip()
+
+    if not trigger or not response:
+        return
+
+    # ذخیره در دیتابیس
+    session.add(database.LearnedResponse(group_guid=update.object_guid, trigger=trigger, response=response))
+    session.commit()
+    update.reply(f"یادگرفتم✅")
+
+
+
+@bot.on_message_updates(filters.is_group)
+def respond_to_trigger(update: Update):
+
+    if not update.text:
+        return
     
-@bot.on_message_updates(filters.is_group, filters.Commands(['ارتقا'], prefixes=''))
+    text = update.text.strip()
+
+    # جستجو در دیتابیس
+    responses = session.query(database.LearnedResponse).filter_by(group_guid=update.object_guid, trigger=text).all()
+
+    for resp in responses:
+        update.reply(resp.response)
+
+@bot.on_message_updates(filters.is_group)
+def delete_learned_response(update: Update):
+    if not update.text or not update.text.endswith("!!"):
+        return
+
+    if not update.is_admin(user_guid=update.author_guid):
+        return
+
+    trigger = update.text.replace("!!", "").strip()
+    if not trigger:
+        return
+
+    deleted = session.query(database.LearnedResponse).filter_by(group_guid=update.object_guid, trigger=trigger).delete()
+    session.commit()
+
+    if deleted:
+        update.reply(f" جواب های«{trigger}» یادم رفت❌")
+    else:
+        update.reply("چیزی برای حذف یافت نشد.")
+
+
+@bot.on_message_updates(filters.is_group, filters.commands(['ارتقا'], prefixes=''))
 def promote_to_admin(update: Update):
     group_guid = update.object_guid
-
+    user_guid = update.get_messages(message_ids=update.reply_message_id).messages[0].author_object_guid
+    info = update.client.get_info(object_guid=user_guid)
+    first_name = info["user"].get("first_name", "")
+    last_name = info["user"].get("last_name", "")
+    full_name = f"{first_name} {last_name}".strip() or "کاربر"
+    mention = f"[{full_name}]({user_guid})"
     # فقط اگر این شخص خودش ادمین گروه باشه
     # is_admin = session.query(database.GroupAdmin).filter_by(group_guid=group_guid, user_guid=author_guid).first()
     if not update.is_admin(user_guid=update.author_guid):
@@ -162,18 +435,23 @@ def promote_to_admin(update: Update):
     # بررسی وجود قبلی در جدول
     existing = session.query(database.GroupAdmin).filter_by(group_guid=group_guid, user_guid=target_guid).first()
     if existing:
-        return update.reply("این کاربر قبلاً ادمین شده است.")
+        return update.reply(f"{mention}  قبلاً ادمین شده است.")
 
     # ثبت در دیتابیس
     session.add(database.GroupAdmin(group_guid=group_guid, user_guid=target_guid))
     bot.set_group_admin(group_guid, target_guid)
     session.commit()
-    return update.reply("✅ این کاربر با موفقیت به ادمین‌های گروه اضافه شد.")
+    return update.reply(f"✅ {mention}با موفقیت به ادمین‌های گروه اضافه شد.")
 
-@bot.on_message_updates(filters.is_group, filters.Commands(['عزل'], prefixes=''))
+@bot.on_message_updates(filters.is_group, filters.commands(['عزل'], prefixes=''))
 def promote_to_admin(update: Update):
     group_guid = update.object_guid
-
+    user_guid = update.get_messages(message_ids=update.reply_message_id).messages[0].author_object_guid
+    info = update.client.get_info(object_guid=user_guid)
+    first_name = info["user"].get("first_name", "")
+    last_name = info["user"].get("last_name", "")
+    full_name = f"{first_name} {last_name}".strip() or "کاربر"
+    mention = f"[{full_name}]({user_guid})"
     # فقط اگر این شخص خودش ادمین گروه باشه
     # is_admin = session.query(database.GroupAdmin).filter_by(group_guid=group_guid, user_guid=author_guid).first()
     if not update.is_admin(user_guid=update.author_guid):
@@ -204,16 +482,16 @@ def promote_to_admin(update: Update):
     
     existing = session.query(database.GroupAdmin).filter_by(group_guid=group_guid, user_guid=target_guid).first()
     if not existing:
-        return update.reply("این کاربر ادمین نیست.")
+        return update.reply(F"{mention} ادمین نیست.")
 
     # ثبت در دیتابیس
     session.delete(existing)
     session.commit()
     bot.set_group_admin(group_guid, target_guid, "UnsetAdmin")
-    return update.reply("✅ این کاربر با موفقیت از ادمین‌های گروه عزل شد.")
+    return update.reply(F"✅  {mention} با موفقیت از ادمین‌های گروه عزل شد.")
 
 
-@bot.on_message_updates(filters.is_group, filters.Commands(['فونت', 'font'], ''))
+@bot.on_message_updates(filters.is_group, filters.commands(['فونت', 'font'], ''))
 def send_font(update: Update):
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
     if group:
@@ -229,24 +507,24 @@ def send_font(update: Update):
         result = response.get('result').get(str(random.randint(1, 138)))
         return update.reply(f'**فونت شما:** {result}', parse_mode=ParseMode.MARKDOWN)
 
-@bot.on_message_updates(filters.is_group, filters.RegexModel(r'^بگو'))
+@bot.on_message_updates(filters.is_group, filters.regex(r'^ربات بگو'))
 async def echo(update: Update):
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
     if group and await update.is_admin(user_guid=update.author_guid):
-        echo_text = update.text[3:]
-        await update.delete()
+        echo_text = update.text[8:]
+        # await update.delete()
         if update.reply_message_id:
             return await update.reply(echo_text, reply_to_message_id=update.reply_message_id)
 
         return await update.reply(echo_text)
 
-@bot.on_message_updates(filters.is_group, filters.Commands('راهنما', ''))
+@bot.on_message_updates(filters.is_group, filters.commands('راهنما', ''))
 async def send_help_to_admin(update: Update):
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
     if group and await update.is_admin(user_guid=update.author_guid):
         return await update.reply(HELP_TEXT, parse_mode=ParseMode.MARKDOWN)
 
-@bot.on_message_updates(filters.is_group, filters.Commands(['لینک', 'link'], ''))
+@bot.on_message_updates(filters.is_group, filters.commands(['لینک', 'link'], ''))
 async def send_group_link(update: Update):
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
     if group:
@@ -259,7 +537,7 @@ async def send_help_to_admin(update: Update):
     if group and await update.is_admin(user_guid=update.author_guid):
         return await update.reply(HELP_TEXT, parse_mode=ParseMode.MARKDOWN)
 
-@bot.on_message_updates(filters.is_group, filters.Commands('قفل', ''))
+@bot.on_message_updates(filters.is_group, filters.commands('قفل', ''))
 def handle_lock_command(update: Update):
     """تنظیم قفل موردنظر در گروه"""
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
@@ -378,7 +656,7 @@ def handle_locks(update: Update):
         elif update.message.type == 'RubinoStory' and group.lock_story:
             return update.delete()
 
-@bot.on_message_updates(filters.is_group, filters.Commands(['status', 'وضعیت']))
+@bot.on_message_updates(filters.is_group, filters.commands(['status', 'وضعیت']))
 def get_status(update: Update) -> None:
     """نمایش وضعیت قفل‌ها در گروه به صورت فارسی"""
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
@@ -391,14 +669,23 @@ def get_status(update: Update) -> None:
 
         update.reply(status_message, parse_mode=ParseMode.MARKDOWN)
 
-@bot.on_message_updates(filters.is_group, filters.Commands('warn'))
+@bot.on_message_updates(filters.is_group, filters.commands('warn'))
 def warn_user_by_admin(update: Update):
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
     if group and update.is_admin(user_guid=update.author_guid):
         return HandleWarns(update=update, session=session)
 
-@bot.on_message_updates(filters.is_group, filters.Commands(['بن', 'اخراج'], prefixes=''))
+@bot.on_message_updates(filters.is_group, filters.commands(['بن', 'اخراج'], prefixes=''))
 def ban_user_by_admin(update: Update):
+    user_guid = update.get_messages(message_ids=update.reply_message_id).messages[0].author_object_guid
+    info = update.client.get_info(object_guid=user_guid)
+    first_name = info["user"].get("first_name", "")
+    last_name = info["user"].get("last_name", "")
+    full_name = f"{first_name} {last_name}".strip() or "کاربر"
+
+
+    # full_name = f"{info.get('user', {}).get('first_name', '')} {info.get('user', {}).get('last_name', '')}".strip() or "کاربر"
+    mention = f"[{full_name}]({user_guid})"
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
         
     if group and update.is_admin(user_guid=update.author_guid):
@@ -420,14 +707,20 @@ def ban_user_by_admin(update: Update):
             banned_user = database.BannedUser(group_guid=update.object_guid, user_guid=author_guid)
             session.add(banned_user)
             update.ban_member(user_guid=author_guid)
-            update.reply(f"کاربر [@{user.username}]({author_guid}) توسط ادمین از گروه حذف شد.",
+            update.reply(f"{mention} توسط ادمین از گروه حذف شد.",
                          parse_mode=ParseMode.MARKDOWN)
         
             
                        
             
-@bot.on_message_updates(filters.is_group, filters.Commands(['رفع', 'آن‌بن', 'آنبن', 'انبن'], prefixes=''))
+@bot.on_message_updates(filters.is_group, filters.commands(['رفع', 'آن‌بن', 'آنبن', 'انبن'], prefixes=''))
 def unban_user_by_admin(update: Update):
+    user_guid = update.get_messages(message_ids=update.reply_message_id).messages[0].author_object_guid
+    info = update.client.get_info(object_guid=user_guid)
+    first_name = info["user"].get("first_name", "")
+    last_name = info["user"].get("last_name", "")
+    full_name = f"{first_name} {last_name}".strip() or "کاربر"
+    mention = f"[{full_name}]({user_guid})"
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
     if group and update.is_admin(user_guid=update.author_guid):
         try:
@@ -460,7 +753,7 @@ def unban_user_by_admin(update: Update):
             session.delete(banned)
             session.commit()
             update.unban_member(user_guid=target_guid)
-            update.reply("✅ این کاربر از لیست سیاه گروه خارج شد.")
+            update.reply(f"✅ {mention} از لیست سیاه گروه خارج شد.")
             # در صورت نیاز: می‌تونی دوباره او را به گروه دعوت کنی اگر دسترسی داری.
             # bot.invite_user(group_guid, target_guid)
 
@@ -468,7 +761,7 @@ def unban_user_by_admin(update: Update):
             update.reply(f"خطایی رخ داد:\n{e}")
             
             
-@bot.on_message_updates(filters.ObjectGuids(ADMINS), filters.Commands('add'))
+@bot.on_message_updates(filters.object_guids(ADMINS), filters.commands('add'))
 def add_group(update: Update):
     preview = bot.group_preview_by_join_link(update.command[-1])
 
@@ -494,107 +787,107 @@ def add_group(update: Update):
         )
         return update.reply(f'گروه 「{group_title}」رو اضافه کردم! 😁')
 
-@bot.on_message_updates(filters.text, filters.is_group)
-async def updates(update: Update):
-    group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
+# @bot.on_message_updates(filters.text, filters.is_group)
+# async def updates(update: Update):
+#     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
 
-    if group:
-        text: str = update.text
+#     if group:
+#         text: str = update.text
 
-        if text == 'اتمام' and game_data and update.author_guid in game_data.values():
-            game_data.clear()
-            return await update.reply('بازی تمام شد!')
+#         if text == 'اتمام' and game_data and update.author_guid in game_data.values():
+#             game_data.clear()
+#             return await update.reply('بازی تمام شد!')
 
-        elif game_data:
-            if game_data['users_count'] == 2:
-                number = get_int(text)
-                if number:
-                    symbol = 'O' if game_data['O'] == update.author_guid else 'X'
+#         elif game_data:
+#             if game_data['users_count'] == 2:
+#                 number = get_int(text)
+#                 if number:
+#                     symbol = 'O' if game_data['O'] == update.author_guid else 'X'
 
-                    if game_data['turn'] == symbol and game_data[symbol] == update.author_guid:
-                        if number in game_data['used']:
-                            return await update.reply('لطفا عدد دیگری انتخاب کنید!')
+#                     if game_data['turn'] == symbol and game_data[symbol] == update.author_guid:
+#                         if number in game_data['used']:
+#                             return await update.reply('لطفا عدد دیگری انتخاب کنید!')
 
-                        row = (number - 1) // 3
-                        col = (number - 1) % 3
-                        game_data.get('instance').play_move(row, col, symbol)
-                        game_data['used'].append(number)
-                        winner = game_data['instance'].check_winner()
-                        if winner:
-                            await update.reply_photo(
-                                photo=game_data['instance'].get_image(),
-                                caption='کاربر {} برنده شد!'.format(winner),
-                                file_name=get_filename())
-                            return game_data.clear()
+#                         row = (number - 1) // 3
+#                         col = (number - 1) % 3
+#                         game_data.get('instance').play_move(row, col, symbol)
+#                         game_data['used'].append(number)
+#                         winner = game_data['instance'].check_winner()
+#                         if winner:
+#                             await update.reply_photo(
+#                                 photo=game_data['instance'].get_image(),
+#                                 caption='کاربر {} برنده شد!'.format(winner),
+#                                 file_name=get_filename())
+#                             return game_data.clear()
 
-                        game_data['turn'] = 'O' if symbol == 'X' else 'X'
-                        game_data['round'] = game_data.get('round') + 1
+#                         game_data['turn'] = 'O' if symbol == 'X' else 'X'
+#                         game_data['round'] = game_data.get('round') + 1
 
-                        if game_data['round'] == 9:
-                            await update.reply_photo(
-                                photo=game_data['instance'].get_image(),
-                                caption='هیچکس برنده نشد، بازی مساوی شد!',
-                                file_name=get_filename())
-                            return game_data.clear()
+#                         if game_data['round'] == 9:
+#                             await update.reply_photo(
+#                                 photo=game_data['instance'].get_image(),
+#                                 caption='هیچکس برنده نشد، بازی مساوی شد!',
+#                                 file_name=get_filename())
+#                             return game_data.clear()
                         
-                        if game_data['is_ai'] is True:
-                            symbol = 'O'
-                            ai_move = game_data['instance'].ai.find_best_move(game_data['instance'].board)
-                            game_data['instance'].play_move(*ai_move, symbol=symbol)
-                            game_data['turn'] = 'O' if symbol == 'X' else 'X'
-                            game_data['round'] = game_data.get('round') + 1
+#                         if game_data['is_ai'] is True:
+#                             symbol = 'O'
+#                             ai_move = game_data['instance'].ai.find_best_move(game_data['instance'].board)
+#                             game_data['instance'].play_move(*ai_move, symbol=symbol)
+#                             game_data['turn'] = 'O' if symbol == 'X' else 'X'
+#                             game_data['round'] = game_data.get('round') + 1
                             
-                        winner = game_data['instance'].check_winner()
-                        if winner:
-                            await update.reply_photo(
-                                photo=game_data['instance'].get_image(),
-                                caption='کاربر {} برنده شد!'.format(winner),
-                                file_name=get_filename())
-                            return game_data.clear()
+#                         winner = game_data['instance'].check_winner()
+#                         if winner:
+#                             await update.reply_photo(
+#                                 photo=game_data['instance'].get_image(),
+#                                 caption='کاربر {} برنده شد!'.format(winner),
+#                                 file_name=get_filename())
+#                             return game_data.clear()
 
-                        await update.reply_photo(
-                            photo=game_data['instance'].get_image(),
-                            file_name=get_filename(),
-                            caption='حالا {} یک عدد انتخاب کند:'.format('O' if symbol == 'X' else 'X'))
+#                         await update.reply_photo(
+#                             photo=game_data['instance'].get_image(),
+#                             file_name=get_filename(),
+#                             caption='حالا {} یک عدد انتخاب کند:'.format('O' if symbol == 'X' else 'X'))
 
-            if text == 'ورود':
-                if not update.author_guid in tuple(game_data.values()):
-                    if not game_data['users_count'] == 2:
-                        if game_data['users_count'] in [0, 2]:
-                            game_data['users_count'] = game_data['users_count'] + 1
-                            game_data[symbols.get(game_data['users_count'])] = update.author_guid
-                            await update.reply('🔥 شما وارد بازی شدید\n\nسمبل شما: {}'.format(symbols.get(game_data['users_count'])))
+#             if text == 'ورود':
+#                 if not update.author_guid in tuple(game_data.values()):
+#                     if not game_data['users_count'] == 2:
+#                         if game_data['users_count'] in [0, 2]:
+#                             game_data['users_count'] = game_data['users_count'] + 1
+#                             game_data[symbols.get(game_data['users_count'])] = update.author_guid
+#                             await update.reply('🔥 شما وارد بازی شدید\n\nسمبل شما: {}'.format(symbols.get(game_data['users_count'])))
 
-                        else:
-                            game_data['users_count'] = game_data['users_count'] + 1
-                            game_data[symbols.get(game_data['users_count'])] = update.author_guid
+#                         else:
+#                             game_data['users_count'] = game_data['users_count'] + 1
+#                             game_data[symbols.get(game_data['users_count'])] = update.author_guid
 
-                            await update.reply('🔥 شما وارد بازی شدید\n\nسمبل شما: {}\n\nیک عدد بین ۱ الی ۹ ارسال کنید:'.format(symbols.get(game_data['users_count'])))
+#                             await update.reply('🔥 شما وارد بازی شدید\n\nسمبل شما: {}\n\nیک عدد بین ۱ الی ۹ ارسال کنید:'.format(symbols.get(game_data['users_count'])))
 
-        elif text.startswith('شروع'):
-            game_data['instance'] = game.TicTacToeGame()
-            game_data['is_ai'] = False
-            game_data['users_count'] = 0
-            game_data['round'] = 0
-            game_data['used'] = []
-            game_data['turn'] = 'X'
+#         elif text.startswith('شروع'):
+#             game_data['instance'] = game.TicTacToeGame()
+#             game_data['is_ai'] = False
+#             game_data['users_count'] = 0
+#             game_data['round'] = 0
+#             game_data['used'] = []
+#             game_data['turn'] = 'X'
 
-            if text.endswith('بات'):
-                game_data['is_ai'] = True
-                game_data['O'] = bot.guid
-                game_data['X'] = update.author_guid
-                game_data['users_count'] = 2
+#             if text.endswith('بات'):
+#                 game_data['is_ai'] = True
+#                 game_data['O'] = bot.guid
+#                 game_data['X'] = update.author_guid
+#                 game_data['users_count'] = 2
 
-                ai_move = game_data['instance'].ai.find_best_move(game_data['instance'].board)
-                game_data['instance'].play_move(*ai_move, symbol='O')
-                game_data['round'] = game_data.get('round') + 1
-                return await update.reply_photo(game_data['instance'].get_image(),
-                                                file_name=get_filename(),
-                                                caption='🎮 بازی شروع شد\n\n⚡️لطفا یک عدد بین 1 تا 9 بفرستید.')
+#                 ai_move = game_data['instance'].ai.find_best_move(game_data['instance'].board)
+#                 game_data['instance'].play_move(*ai_move, symbol='O')
+#                 game_data['round'] = game_data.get('round') + 1
+#                 return await update.reply_photo(game_data['instance'].get_image(),
+#                                                 file_name=get_filename(),
+#                                                 caption='🎮 بازی شروع شد\n\n⚡️لطفا یک عدد بین 1 تا 9 بفرستید.')
 
-            await update.reply_photo(game_data['instance'].get_image(),
-                                     file_name=get_filename(),
-                                     caption='🎮 بازی شروع شد\n\n⚡️برای ورود به بازی کلمه **"ورود"** را ارسال کنید.')
+#             await update.reply_photo(game_data['instance'].get_image(),
+#                                      file_name=get_filename(),
+#                                      caption='🎮 بازی شروع شد\n\n⚡️برای ورود به بازی کلمه **"ورود"** را ارسال کنید.')
 
 # شروع اجرای کرون جاب
 scheduler.start()
